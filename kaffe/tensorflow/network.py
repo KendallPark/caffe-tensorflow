@@ -173,11 +173,11 @@ class Network(object):
             kernel_i= kernel_shape[i]
             stride_i = stride_shape[i]
             input_i = input_shape[i]
-            if padding == 'SAME':   
+            if padding == 'SAME':
                 out_shape.append(Math.ceil((input_i) / float(stride_i) ))
             else:
                 out_shape.append(Math.ceil((input_i - kernel_i + 1) / float(stride_i) ))
-            
+
             #out_shape.append(Math.floor((input_i + 2 * pad_i - kernel_i) / float(stride_i) + 1))
         deconv = lambda i, k: tf.nn.conv2d_transpose(i, k, output_shape=out_shape, strides=stride_shape, padding=padding)
         with tf.variable_scope(name) as scope:
@@ -300,7 +300,24 @@ class Network(object):
                 output = tf.nn.relu(output)
             return output
 
+
     @layer
     def dropout(self, input, keep_prob, name):
         keep = 1 - self.use_dropout + (self.use_dropout * keep_prob)
         return tf.nn.dropout(input, keep, name=name)
+
+    @layer
+    def reshape(self,input,b,x,y,c,name,transpose = False) :
+        if transpose :
+            input = tf.reshape(input,[-1,c,x,y])
+            return tf.transpose(input,(0,2,3,1))
+
+        return tf.reshape(input,[-1,x,y,c],name = name)
+
+    @layer
+    def flatten(self,input,name):
+        input = tf.transpose(input,(0,3,1,2))
+        dim = 1
+        for d in input.get_shape()[1:].as_list():
+                dim *= d
+        return tf.reshape(input,[-1,dim],name = name)
