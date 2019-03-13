@@ -15,7 +15,7 @@ LAYER_DESCRIPTORS = {
     'Concat': shape_concat,
     'ContrastiveLoss': shape_scalar,
     'Convolution': shape_convolution,
-    'Deconvolution': shape_convolution,
+    'Deconvolution': shape_deconvolution,
     'Data': shape_data,
     'Dropout': shape_identity,
     'DummyData': shape_data,
@@ -109,7 +109,6 @@ class LayerAdapter(object):
     @property
     def parameters(self):
         name = NodeDispatch.get_handler_name(self.kind)
-        print('name', name)
         if name.lower() == 'deconvolution':
             name = 'convolution'
         name = '_'.join((name, 'param'))
@@ -145,7 +144,7 @@ class LayerAdapter(object):
         s_h = self.get_kernel_value(params.stride_h, params.stride, 0, default=1)
         s_w = self.get_kernel_value(params.stride_w, params.stride, 1, default=1)
         p_h = self.get_kernel_value(params.pad_h, params.pad, 0, default=0)
-        p_w = self.get_kernel_value(params.pad_h, params.pad, 1, default=0)
+        p_w = self.get_kernel_value(params.pad_w, params.pad, 1, default=0)
         return KernelParameters(k_h, k_w, s_h, s_w, p_h, p_w)
 
 

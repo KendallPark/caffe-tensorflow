@@ -72,9 +72,13 @@ class DataInjector(object):
         # potential for future issues.
         # The Caffe-backend does not suffer from this problem.
         data = list(data)
-        squeeze_indices = [1]  # Squeeze biases.
-        if node.kind == NodeKind.InnerProduct:
-            squeeze_indices.append(0)  # Squeeze FC.
+        # Only squeeze biases if there are biases
+        squeeze_indices = []
+        if node.kind in (NodeKind.Convolution, NodeKind.Deconvolution, NodeKind.InnerProduct):
+            if node.parameters.bias_term:
+                squeeze_indices.append(1)
+            if node.kind == NodeKind.InnerProduct:
+                squeeze_indices.append(0)  # Squeeze FC.
         for idx in squeeze_indices:
             data[idx] = np.squeeze(data[idx])
         return data
@@ -117,6 +121,8 @@ class DataReshaper(object):
     def __call__(self, graph):
         for node in graph.nodes:
             if node.data is None:
+                continue
+            if node.kind == NodeKind.BatchNorm:
                 continue
             if node.kind not in self.reshaped_node_types:
                 # Check for 2+ dimensional data
@@ -274,7 +280,7 @@ class ParameterNamer(object):
         for node in graph.nodes:
             if node.data is None:
                 continue
-            if node.kind in (NodeKind.Convolution, NodeKind.InnerProduct):
+            if node.kind in (NodeKind.Convolution, NodeKind.Deconvolution, NodeKind.InnerProduct):
                 names = ('weights',)
                 if node.parameters.bias_term:
                     names += ('biases',)

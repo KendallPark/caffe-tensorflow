@@ -77,16 +77,22 @@ class MaybeActivated(object):
 
 class TensorFlowMapper(NodeMapper):
 
-    def get_kernel_params(self, node):
+    def get_kernel_params(self, node, is_deconvolution = False):
         kernel_params = node.layer.kernel_parameters
         input_shape = node.get_only_parent().output_shape
-        padding = get_padding_type(kernel_params, input_shape, node.output_shape)
+        # Reverse the input and output shapes when determining padding type for deconvolution
+        big_shape = node.output_shape if is_deconvolution else input_shape
+        little_shape = input_shape if is_deconvolution else node.output_shape
+        padding = get_padding_type(kernel_params, big_shape, little_shape)
         # Only emit the padding if it's not the default value.
         padding = {'padding': padding} if padding != network.DEFAULT_PADDING else {}
         return (kernel_params, padding)
 
     def map_convolution(self, node):
         (kernel_params, kwargs) = self.get_kernel_params(node)
+        dilation = node.layer.get_kernel_value(None, node.parameters.dilation, 0, default = 1)
+        if dilation != 1:
+            kwargs['dilation'] = dilation
         h = kernel_params.kernel_h
         w = kernel_params.kernel_w
         c_o = node.output_shape[1]
@@ -102,7 +108,7 @@ class TensorFlowMapper(NodeMapper):
                                     kernel_params.stride_h, kernel_params.stride_w, **kwargs)
 
     def map_deconvolution(self, node):
-        (kernel_params, kwargs) = self.get_kernel_params(node)
+        (kernel_params, kwargs) = self.get_kernel_params(node, True)
         h = kernel_params.kernel_h
         w = kernel_params.kernel_w
         c_o = node.output_shape[1]
@@ -157,7 +163,7 @@ class TensorFlowMapper(NodeMapper):
     def map_concat(self, node):
         if node.parents[0].kind == 'Flatten':
             axis = node.parameters.axis
-        else :    
+        else :
             axis = (2, 3, 1, 0)[node.parameters.axis]
         return TensorFlowNode('concat', axis)
 
@@ -171,10 +177,7 @@ class TensorFlowMapper(NodeMapper):
         return TensorFlowNode('reshape', )
 
     def map_batch_norm(self, node):
-        if node.data :
-            scale_offset = len(node.data) == 4
-        else :
-            scale_offset = True    
+        scale_offset = node.scale_bias_node is not None or (node.data and len(node.data) == 4)
         kwargs = {} if scale_offset else {'scale_offset': False}
         return MaybeActivated(node, default=False)('batch_normalization', **kwargs)
 
@@ -308,6 +311,7 @@ class TensorFlowTransformer(object):
                 DataReshaper({
                     # (c_o, c_i, h, w) -> (h, w, c_i, c_o)
                     NodeKind.Convolution: (2, 3, 1, 0),
+                    NodeKind.Deconvolution: (2, 3, 1, 0),
 
                     # (c_o, c_i) -> (c_i, c_o)
                     NodeKind.InnerProduct: (1, 0)

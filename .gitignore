@@ -13,3 +13,11 @@
 
 # Generated files.
 *.npy
+
+.project
+
+.pydevproject
+
+*.npy
+
+*.gz

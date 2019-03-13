@@ -1,6 +1,8 @@
+import math
 import numpy as np
 import tensorflow as tf
 
+BATCH_SIZE = 4 # Only used for deconvolution
 DEFAULT_PADDING = 'SAME'
 
 
@@ -113,7 +115,8 @@ class Network(object):
              relu=True,
              padding=DEFAULT_PADDING,
              group=1,
-             biased=True):
+             biased=True,
+             dilation=1):
         # Verify that the padding is acceptable
         self.validate_padding(padding)
         # Get the number of channels in the input
@@ -122,7 +125,10 @@ class Network(object):
         assert c_i % group == 0
         assert c_o % group == 0
         # Convolution for a given input and kernel
-        convolve = lambda i, k: tf.nn.conv2d(i, k, [1, s_h, s_w, 1], padding=padding)
+        if dilation > 1:
+            convolve = lambda i, k: tf.nn.atrous_conv2d(i, k, dilation, padding=padding)
+        else:
+            convolve = lambda i, k: tf.nn.conv2d(i, k, [1, s_h, s_w, 1], padding=padding)
         with tf.variable_scope(name) as scope:
             kernel = self.make_var('weights', shape=[k_h, k_w, c_i / group, c_o])
             if group == 1:
@@ -166,19 +172,22 @@ class Network(object):
         assert c_o % group == 0
         # Convolution for a given input and kernel
         stride_shape = [1, s_h, s_w, 1]
-        kernel_shape = [k_h, k_w, c_i, c_o]
+        kernel_shape = [c_i, k_h, k_w, c_o]
         input_shape = input.get_shape()
-        out_shape = []
-        for i in range(len(input.get_shape())):
+        # Code deep in conv2d_transpose cannot convert a list with None to a Tensor, so we need to specify batch size
+        out_shape = [BATCH_SIZE]
+        for i in range(1,3):
             kernel_i= kernel_shape[i]
             stride_i = stride_shape[i]
             input_i = input_shape[i]
             if padding == 'SAME':
-                out_shape.append(Math.ceil((input_i) / float(stride_i) ))
+                out_shape.append((input_i * stride_i).value)
             else:
-                out_shape.append(Math.ceil((input_i - kernel_i + 1) / float(stride_i) ))
+                out_shape.append((input_i * stride_i + kernel_i - 1).value)
 
-            #out_shape.append(Math.floor((input_i + 2 * pad_i - kernel_i) / float(stride_i) + 1))
+        # We specify 1 in the last index, since that is the split dimension below
+        out_shape.append(1)
+
         deconv = lambda i, k: tf.nn.conv2d_transpose(i, k, output_shape=out_shape, strides=stride_shape, padding=padding)
         with tf.variable_scope(name) as scope:
             kernel = self.make_var('weights', shape=[k_h, k_w, c_i / group, c_o])
@@ -186,13 +195,12 @@ class Network(object):
                 # This is the common-case. Convolve the input without any further complications.
                 output = deconv(input, kernel)
             else:
-                raise NotImplementedError('Multiple groups not supported for deconvolution operations')
                 # Split the input into groups and then convolve each of them independently
-                input_groups = tf.split(3, group, input)
-                kernel_groups = tf.split(3, group, kernel)
-                output_groups = [convolve(i, k) for i, k in zip(input_groups, kernel_groups)]
+                input_groups = tf.split(input, group, axis=3)
+                kernel_groups = tf.split(kernel, group, axis=3)
+                output_groups = [deconv(i, k) for i, k in zip(input_groups, kernel_groups)]
                 # Concatenate the groups
-                output = tf.concat(3, output_groups)
+                output = tf.concat(output_groups, axis=3)
             # Add the biases
             if biased:
                 biases = self.make_var('biases', [c_o])
@@ -235,7 +243,7 @@ class Network(object):
 
     @layer
     def concat(self, inputs, axis, name):
-        return tf.concat(values=inputs, axis=axis,  name=name)
+        return tf.concat(axis=axis, values=inputs, name=name)
 
     @layer
     def add(self, inputs, name):
@@ -272,15 +280,14 @@ class Network(object):
             # in TensorFlow's NHWC ordering (unlike Caffe's NCHW).
             if input_shape[1] == 1 and input_shape[2] == 1:
                 input = tf.squeeze(input, squeeze_dims=[1, 2])
-            else:
-                raise ValueError('Rank 2 tensor input expected for softmax!')
+
         return tf.nn.softmax(input, name=name)
 
     @layer
     def batch_normalization(self, input, name, scale_offset=True, relu=False):
         # NOTE: Currently, only inference is supported
         with tf.variable_scope(name) as scope:
-            shape = [input.get_shape()[-1]]
+            shape = [1, 1, 1, input.get_shape()[-1].value]
             if scale_offset:
                 scale = self.make_var('scale', shape=shape)
                 offset = self.make_var('offset', shape=shape)

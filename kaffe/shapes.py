@@ -6,17 +6,25 @@ from .errors import KaffeError
 TensorShape = namedtuple('TensorShape', ['batch_size', 'channels', 'height', 'width'])
 
 
-def get_filter_output_shape(i_h, i_w, params, round_func):
-    o_h = (i_h + 2 * params.pad_h - params.kernel_h) / float(params.stride_h) + 1
-    o_w = (i_w + 2 * params.pad_w - params.kernel_w) / float(params.stride_w) + 1
-    return (int(round_func(o_h)), int(round_func(o_w)))
+def get_filter_output_shape_fn(round_func, dilation = 1):
+    def get_filter_output_shape(i_h, i_w, params):
+        effective_pad_h = params.pad_h / dilation
+        effective_pad_w = params.pad_w / dilation
+        o_h = (i_h + 2 * effective_pad_h - params.kernel_h) / float(params.stride_h) + 1
+        o_w = (i_w + 2 * effective_pad_w - params.kernel_w) / float(params.stride_w) + 1
+        return (int(round_func(o_h)), int(round_func(o_w)))
+    return get_filter_output_shape
 
+def get_upsampling_output_shape(i_h, i_w, params):
+    o_h = (i_h - 1) * params.stride_h - 2 * params.pad_h + params.kernel_h
+    o_w = (i_w - 1) * params.stride_w - 2 * params.pad_w + params.kernel_w
+    return o_h, o_w
 
-def get_strided_kernel_output_shape(node, round_func):
+def get_strided_kernel_output_shape(node, output_shape_func):
     assert node.layer is not None
     input_shape = node.get_only_parent().output_shape
-    o_h, o_w = get_filter_output_shape(input_shape.height, input_shape.width,
-                                       node.layer.kernel_parameters, round_func)
+    o_h, o_w = output_shape_func(input_shape.height, input_shape.width,
+                                 node.layer.kernel_parameters)
     params = node.layer.parameters
     has_c_o = hasattr(params, 'num_output')
     c = params.num_output if has_c_o else input_shape.channels
@@ -41,7 +49,7 @@ def shape_data(node):
         # Old-style input specification
         val = node.output_shape
         if len(val) < 4:
-           return list(val) + [1] * (4 - len(val))
+            return list(val) + [1] * (4 - len(val))
         return val
     try:
         # New-style input specification
@@ -105,11 +113,14 @@ def flatten_shape(node) :
     return TensorShape(shape1.batch_size,shape1.channels*shape1.height*shape1.width,1,1)
     
 def shape_convolution(node):
-    return get_strided_kernel_output_shape(node, math.floor)
+    dilation = node.layer.get_kernel_value(None, node.parameters.dilation, 0, default = 1)
+    return get_strided_kernel_output_shape(node, get_filter_output_shape_fn(math.floor, dilation))
 
+def shape_deconvolution(node):
+    return get_strided_kernel_output_shape(node, get_upsampling_output_shape)
 
 def shape_pool(node):
-    return get_strided_kernel_output_shape(node, math.ceil)
+    return get_strided_kernel_output_shape(node, get_filter_output_shape_fn(math.ceil))
 
 
 def shape_inner_product(node):
